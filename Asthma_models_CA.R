@@ -596,5 +596,129 @@ plot(pm25.rk.raster.15); plot(pm25.pts[pm25.pts@data$Year==2015,], add=T, pch=1,
                               /max(pm25.pts[pm25.pts@data$Year==2015,]$value-min(pm25.pts[pm25.pts@data$Year==2015,]$value)))
 
 # Stack the rasters of interpolated concentration for each pollutants
+# Except so2 b/c too little data
+no2.stack <- stack(no2.rk.raster.09, no2.rk.raster.12, no2.rk.raster.13, 
+                   no2.rk.raster.14, no2.rk.raster.15)
+
+co.stack <- stack(co.rk.raster.09, co.rk.raster.12, co.rk.raster.13, 
+                   co.rk.raster.14, co.rk.raster.15)
+
+o3.stack <- stack(o3.rk.raster.09, o3.rk.raster.12, o3.rk.raster.13, 
+                   o3.rk.raster.14, o3.rk.raster.15)
+
+pm10.stack <- stack(pm10.rk.raster.09, pm10.rk.raster.12, pm10.rk.raster.13, 
+                   pm10.rk.raster.14, pm10.rk.raster.15)
+
+pm25.stack <- stack(pm25.rk.raster.09, pm25.rk.raster.12, pm25.rk.raster.13, 
+                   pm25.rk.raster.14, pm25.rk.raster.15)
+
 # Extract values for each zip code
-# Run the models
+# Extract no2, co, o3, pm10, amd pm25
+
+kk.pts <- cases.pts
+kk.pts@data$no2 <- extract(no2.stack, kk.pts)
+kk.pts@data$co <- extract(co.stack, kk.pts)
+kk.pts@data$o3 <- extract(o3.stack, kk.pts)
+kk.pts@data$pm10 <- extract(pm10.stack, kk.pts)
+kk.pts@data$pm25 <- extract(pm25.stack, kk.pts)
+
+dat <- kk.pts@data
+
+d <- dat [,c("zip", "Year", "Number.of.Visits", "Age.adjusted.rate",
+                "latitude", "longitude")]
+d$no2 <- ifelse(dat$Year==2009, dat$no2[,1],ifelse(dat$Year==2012, dat$no2[,2],
+                ifelse(dat$Year==2013, dat$no2[,3], 
+                ifelse(dat$Year==2014, dat$no2[,4], 
+                ifelse(dat$Year==2015, dat$no2[,5],-999)))))
+
+d$co <- ifelse(dat$Year==2009, dat$co[,1],ifelse(dat$Year==2012, dat$co[,2],
+                                                   ifelse(dat$Year==2013, dat$co[,3], 
+                                                          ifelse(dat$Year==2014, dat$co[,4], 
+                                                                 ifelse(dat$Year==2015, dat$co[,5],-999)))))
+
+d$o3 <- ifelse(dat$Year==2009, dat$o3[,1],ifelse(dat$Year==2012, dat$o3[,2],
+                                                   ifelse(dat$Year==2013, dat$o3[,3], 
+                                                          ifelse(dat$Year==2014, dat$o3[,4], 
+                                                                 ifelse(dat$Year==2015, dat$o3[,5],-999)))))
+
+d$pm10 <- ifelse(dat$Year==2009, dat$pm10[,1],ifelse(dat$Year==2012, dat$pm10[,2],
+                                                   ifelse(dat$Year==2013, dat$pm10[,3], 
+                                                          ifelse(dat$Year==2014, dat$pm10[,4], 
+                                                                 ifelse(dat$Year==2015, dat$pm10[,5],-999)))))
+
+d$pm25 <- ifelse(dat$Year==2009, dat$pm25[,1],ifelse(dat$Year==2012, dat$pm25[,2],
+                                                   ifelse(dat$Year==2013, dat$pm25[,3], 
+                                                          ifelse(dat$Year==2014, dat$pm25[,4], 
+                                                                 ifelse(dat$Year==2015, dat$pm25[,5],-999)))))
+
+# Remove NA's (not so sure why they don't have pollutants, perhaps out of state boundary)
+d <- d[!is.na(d$o3),]
+
+# Split data in training and testing
+training <- d[d$Year<2015,c(3:4, 7:11)]
+testing <- d[d$Year>2014,c(3:4, 7:11)]
+all <- d
+
+# Run the models: random forest
+library(randomForest)
+rfbf = randomForest(Age.adjusted.rate ~ ., data=training[,-1], importance=T)
+rfbf2 = randomForest(Number.of.Visits ~ ., data=training[,-2], importance=T)
+
+rfbf # ok 30.3% var explained
+rfbf2 # 18.3% cases do worse
+
+#Most important variables
+varImpPlot(rfbf)
+varImpPlot(rfbf2)
+
+# Predicting with the testing data
+pred <- predict(rfbf, testing[,-1], type="response",
+                norm.votes=F, predict.all=FALSE, proximity=FALSE, nodes=FALSE)
+
+#Model looks bad
+plot(exp(pred), exp(testing$Age.adjusted.rate), ylim=c(0,150), xlim=c(0,150),
+     xlab="Pred 2015 asthma attacks rates", ylab="Obs 2015 asthma attacks rates")
+abline(lm(exp(pred)~exp(testing$Age.adjusted.rate)), lty=2)
+abline(1,1, col="red")
+
+cor(pred, testing$Age.adjusted.rate)^2 #terrible fit 0.176
+
+#MSE random forest VS just using the overal mean...15% better
+mean((pred - testing$Age.adjusted.rate)^2)
+mean((mean(training$Age.adjusted.rate) - testing$Age.adjusted.rate)^2)
+
+# Trying boosting
+library(gbm)
+# Rate
+boost.gaussian <- gbm(Age.adjusted.rate ~ ., data=training[,-1], distribution = "gaussian", 
+                      n.trees=5000, interaction.depth = 4, shrinkage = 0.1)
+# Count...does worse
+boost.poisson <- gbm(Number.of.Visits ~ ., data=training[-2], distribution = "poisson", 
+                     n.trees=5000, interaction.depth = 4, shrinkage = 0.1)
+
+#Predicting
+pred.boost.gaus <- predict(boost.gaussian, testing[,-1], n.trees=5000)
+pred.boost.pois <- predict(boost.poisson, testing[,-1], n.trees=5000)
+
+#MSE boost gaussian...very similar to RF
+mean (( pred.boost.gaus - testing$Age.adjusted.rate ) ^2)
+mean (( pred.boost.pois - testing$Number.of.Visits ) ^2)
+cor(pred.boost.gaus, testing$Age.adjusted.rate)^2
+cor(pred.boost.pois, testing$Number.of.Visits)^2
+plot(exp(pred.boost.gaus), exp(testing$Age.adjusted.rate), ylim=c(0,150), xlim=c(0,150),
+     xlab="Pred 2015 asthma attacks rates", ylab="Obs 2015 asthma attacks rates")
+abline(1,1, col="red")
+abline(lm(exp(pred.boost.gaus)~exp(testing$Age.adjusted.rate)), lty=2)
+
+# Poisson looks awful
+plot(pred.boost.pois, testing$Number.of.Visits, ylim=c(0,300), xlim=c(0,300),
+     xlab="Pred 2015 asthma attacks rates", ylab="Obs 2015 asthma attacks rates")
+abline(1,1, col="red")
+abline(lm(pred.boost.pois~testing$Age.adjusted.rate), lty=2)
+
+
+# HAVE TO TRY SOMETHING ELSE
+# If fitting GLM, try interactions, cuadratic, cubic and to the 4th degree polynomials
+
+
+
