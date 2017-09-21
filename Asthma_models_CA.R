@@ -236,5 +236,365 @@ rad <- raster("wc2.0_2.5m_srad_04.tif")
 crad <- projectRaster(rad, r)
 crad <- mask(crad, ca_simple)
 
+# Make raster stack of air pollutants
+covar <- stack(celv, cwind, cprec, ctemp, crad)
+
+## Convert cases to spatialpoints data frame
+cases.pts <- SpatialPoints(data.frame(cases$longitude, cases$latitude))
+cases.pts <- SpatialPointsDataFrame(cases.pts, cases)
+projection(cases.pts) <- "+proj=longlat +datum=NAD83"
+#Project
+cases.pts <- spTransform(cases.pts, TA)
+
+## Interpolation of air pollutants
+# NEED TO DO IT FOR EVERY YEAR!!!
+
+# Transform raster stack to spatial pixels data frame
+covar <- as(covar, "SpatialPixelsDataFrame")
+
+# SO2. It did not converged
+library(GSIF)
+library(plotKML)
+
+rf.so2.09 <- fit.gstatModel(so2.pts[so2.pts@data$Year==2009,], 
+                            value~ layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                         + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                         method="randomForest", fit.method=7)
+# Checking the model
+print(rf.so2.09)
+plot(rf.so2.09)
+plot(rf.so2@regModel)
+rf.so2@vgmModel
+
+# Predict...It doesn't work for SO2...to little obs
+# Perhaps with data for the whole US
+so2.rk <- predict(rf.so2, covar, predict.method = "RK")
+plot(so2.rk)
+
+# NO2. it converged for 2009, 2013, 2014, and 2015
+# It did not converged for 2012
+rf.no2.09 <- fit.gstatModel(no2.pts[no2.pts@data$Year==2009,], 
+                         value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                         + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                         method="randomForest", fit.method=7)
+
+rf.no2.12 <- fit.gstatModel(no2.pts[no2.pts@data$Year==2012,], 
+                            value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                            + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                            method="randomForest", fit.method=7)
+
+rf.no2.13 <- fit.gstatModel(no2.pts[no2.pts@data$Year==2013,], 
+                            value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                            + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                            method="randomForest", fit.method=7)
+
+rf.no2.14 <- fit.gstatModel(no2.pts[no2.pts@data$Year==2014,], 
+                            value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                            + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                            method="randomForest", fit.method=7)
+
+rf.no2.15 <- fit.gstatModel(no2.pts[no2.pts@data$Year==2015,], 
+                            value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                            + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                            method="randomForest", fit.method=7)
 
 
+print(rf.no2.13)
+plot(rf.no2.09)
+
+## plot the estimated error for number of bootstrapped trees:
+plot(rf.no2.09@regModel)
+rf.no2.09@vgmModel
+
+# Predict...predictions still good
+no2.rk.09 <- predict(rf.no2.09, covar, predict.method = "RK")
+no2.rk.12 <- predict(rf.no2.12, covar, predict.method = "RK")
+no2.rk.13 <- predict(rf.no2.13, covar, predict.method = "RK")
+no2.rk.14 <- predict(rf.no2.14, covar, predict.method = "RK")
+no2.rk.15 <- predict(rf.no2.15, covar, predict.method = "RK")
+
+plot(no2.rk.15)# it looks good
+
+# Making a raster from predictions
+pred.no2.09 <- no2.rk.09@predicted
+no2.rk.raster.09 <- raster(pred.no2.09[4])
+
+pred.no2.12 <- no2.rk.12@predicted
+no2.rk.raster.12 <- raster(pred.no2.12[4])
+
+pred.no2.13 <- no2.rk.13@predicted
+no2.rk.raster.13 <- raster(pred.no2.13[4])
+
+pred.no2.14 <- no2.rk.14@predicted
+no2.rk.raster.14 <- raster(pred.no2.14[4])
+
+pred.no2.15 <- no2.rk.15@predicted
+no2.rk.raster.15 <- raster(pred.no2.15[4])
+
+
+plot(no2.rk.raster.15); plot(no2.pts[no2.pts@data$Year==2015,], add=T, pch=1, cex=(no2.pts[no2.pts@data$Year==2015,]$value-min(no2.pts[no2.pts@data$Year==2015,]$value))
+                          /max(no2.pts[no2.pts@data$Year==2015,]$value-min(no2.pts[no2.pts@data$Year==2015,]$value)))
+
+
+# CO it converged for 2013(neg r2)
+# It did not converged for 2009, 2012(neg r2), 2014 (neg r2), 2015
+rf.co.09 <- fit.gstatModel(co.pts[co.pts@data$Year==2009,], 
+                            value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                            + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                            method="randomForest", fit.method=7)
+
+rf.co.12 <- fit.gstatModel(co.pts[co.pts@data$Year==2012,], 
+                            value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                            + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                            method="randomForest", fit.method=7)
+
+rf.co.13 <- fit.gstatModel(co.pts[co.pts@data$Year==2013,], 
+                            value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                            + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                            method="randomForest", fit.method=7)
+
+rf.co.14 <- fit.gstatModel(co.pts[co.pts@data$Year==2014,], 
+                            value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                            + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                            method="randomForest", fit.method=7)
+
+rf.co.15 <- fit.gstatModel(co.pts[co.pts@data$Year==2015,], 
+                            value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                            + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                            method="randomForest", fit.method=7)
+
+
+print(rf.co.15)
+plot(rf.co.09)
+
+## plot the estimated error for number of bootstrapped trees:
+plot(rf.co.09@regModel)
+rf.co.09@vgmModel
+
+# Predict...predictions still good
+co.rk.09 <- predict(rf.co.09, covar, predict.method = "RK")
+co.rk.12 <- predict(rf.co.12, covar, predict.method = "RK")
+co.rk.13 <- predict(rf.co.13, covar, predict.method = "RK")
+co.rk.14 <- predict(rf.co.14, covar, predict.method = "RK")
+co.rk.15 <- predict(rf.co.15, covar, predict.method = "RK")
+
+plot(co.rk.15)# it looks ok for some
+
+# Making a raster from predictions
+pred.co.09 <- co.rk.09@predicted
+co.rk.raster.09 <- raster(pred.co.09[4])
+
+pred.co.12 <- co.rk.12@predicted
+co.rk.raster.12 <- raster(pred.co.12[4])
+
+pred.co.13 <- co.rk.13@predicted
+co.rk.raster.13 <- raster(pred.co.13[4])
+
+pred.co.14 <- co.rk.14@predicted
+co.rk.raster.14 <- raster(pred.co.14[2])
+
+pred.co.15 <- co.rk.15@predicted
+co.rk.raster.15 <- raster(pred.co.15[4])
+
+# It looks surprisingly ok (not great, just OK)
+plot(co.rk.raster.15); plot(co.pts[co.pts@data$Year==2015,], add=T, pch=1, cex=(co.pts[co.pts@data$Year==2015,]$value-min(co.pts[co.pts@data$Year==2015,]$value))
+                             /max(co.pts[co.pts@data$Year==2015,]$value-min(co.pts[co.pts@data$Year==2015,]$value)))
+
+
+# O3 it converged for 2009, 2013, 2014
+# It did not converged for 2012, 2015
+rf.o3.09 <- fit.gstatModel(o3.pts[o3.pts@data$Year==2009,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+rf.o3.12 <- fit.gstatModel(o3.pts[o3.pts@data$Year==2012,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+rf.o3.13 <- fit.gstatModel(o3.pts[o3.pts@data$Year==2013,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+rf.o3.14 <- fit.gstatModel(o3.pts[o3.pts@data$Year==2014,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+rf.o3.15 <- fit.gstatModel(o3.pts[o3.pts@data$Year==2015,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+
+print(rf.o3.15)
+plot(rf.o3.09)
+
+## plot the estimated error for number of bootstrapped trees:
+plot(rf.o3.09@regModel)
+rf.o3.09@vgmModel
+
+# Predict...predictions still good
+o3.rk.09 <- predict(rf.o3.09, covar, predict.method = "RK")
+o3.rk.12 <- predict(rf.o3.12, covar, predict.method = "RK")
+o3.rk.13 <- predict(rf.o3.13, covar, predict.method = "RK")
+o3.rk.14 <- predict(rf.o3.14, covar, predict.method = "RK")
+o3.rk.15 <- predict(rf.o3.15, covar, predict.method = "RK")
+
+plot(o3.rk.15)# it looks good
+
+# Making a raster from predictions
+pred.o3.09 <- o3.rk.09@predicted
+o3.rk.raster.09 <- raster(pred.o3.09[4])
+
+pred.o3.12 <- o3.rk.12@predicted
+o3.rk.raster.12 <- raster(pred.o3.12[4])
+
+pred.o3.13 <- o3.rk.13@predicted
+o3.rk.raster.13 <- raster(pred.o3.13[4])
+
+pred.o3.14 <- o3.rk.14@predicted
+o3.rk.raster.14 <- raster(pred.o3.14[4])
+
+pred.o3.15 <- o3.rk.15@predicted
+o3.rk.raster.15 <- raster(pred.o3.15[4])
+
+# It looks good
+plot(o3.rk.raster.15); plot(o3.pts[o3.pts@data$Year==2015,], add=T, pch=1, cex=(o3.pts[o3.pts@data$Year==2015,]$value-min(o3.pts[o3.pts@data$Year==2015,]$value))
+                            /max(o3.pts[o3.pts@data$Year==2015,]$value-min(o3.pts[o3.pts@data$Year==2015,]$value)))
+
+
+# PM10 it converged for 2009, 2015
+# It did not converged for 2012, 2013, 2014
+rf.pm10.09 <- fit.gstatModel(pm10.pts[pm10.pts@data$Year==2009,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+rf.pm10.12 <- fit.gstatModel(pm10.pts[pm10.pts@data$Year==2012,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+rf.pm10.13 <- fit.gstatModel(pm10.pts[pm10.pts@data$Year==2013,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+rf.pm10.14 <- fit.gstatModel(pm10.pts[pm10.pts@data$Year==2014,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+rf.pm10.15 <- fit.gstatModel(pm10.pts[pm10.pts@data$Year==2015,], 
+                           value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                           + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                           method="randomForest", fit.method=7)
+
+
+print(rf.pm10.15)
+plot(rf.pm10.09)
+
+## plot the estimated error for number of bootstrapped trees:
+plot(rf.pm10.09@regModel)
+rf.pm10.09@vgmModel
+
+# Predict...predictions still good
+pm10.rk.09 <- predict(rf.pm10.09, covar, predict.method = "RK")
+pm10.rk.12 <- predict(rf.pm10.12, covar, predict.method = "RK")
+pm10.rk.13 <- predict(rf.pm10.13, covar, predict.method = "RK")
+pm10.rk.14 <- predict(rf.pm10.14, covar, predict.method = "RK")
+pm10.rk.15 <- predict(rf.pm10.15, covar, predict.method = "RK")
+
+plot(pm10.rk.15)# it looks good
+
+# Making a raster from predictions
+pred.pm10.09 <- pm10.rk.09@predicted
+pm10.rk.raster.09 <- raster(pred.pm10.09[4])
+
+pred.pm10.12 <- pm10.rk.12@predicted
+pm10.rk.raster.12 <- raster(pred.pm10.12[4])
+
+pred.pm10.13 <- pm10.rk.13@predicted
+pm10.rk.raster.13 <- raster(pred.pm10.13[4])
+
+pred.pm10.14 <- pm10.rk.14@predicted
+pm10.rk.raster.14 <- raster(pred.pm10.14[4])
+
+pred.pm10.15 <- pm10.rk.15@predicted
+pm10.rk.raster.15 <- raster(pred.pm10.15[4])
+
+# It looks good
+plot(pm10.rk.raster.15); plot(pm10.pts[pm10.pts@data$Year==2015,], add=T, pch=1, cex=(pm10.pts[pm10.pts@data$Year==2015,]$value-min(pm10.pts[pm10.pts@data$Year==2015,]$value))
+                            /max(pm10.pts[pm10.pts@data$Year==2015,]$value-min(pm10.pts[pm10.pts@data$Year==2015,]$value)))
+
+
+# PM2.5 it converged for 2009
+# It did not converged for 2012, 2013, 2014, 2015
+rf.pm25.09 <- fit.gstatModel(pm25.pts[pm25.pts@data$Year==2009,], 
+                             value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                             + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                             method="randomForest", fit.method=7)
+
+rf.pm25.12 <- fit.gstatModel(pm25.pts[pm25.pts@data$Year==2012,], 
+                             value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                             + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                             method="randomForest", fit.method=7)
+
+rf.pm25.13 <- fit.gstatModel(pm25.pts[pm25.pts@data$Year==2013,], 
+                             value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                             + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                             method="randomForest", fit.method=7)
+
+rf.pm25.14 <- fit.gstatModel(pm25.pts[pm25.pts@data$Year==2014,], 
+                             value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                             + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                             method="randomForest", fit.method=7)
+
+rf.pm25.15 <- fit.gstatModel(pm25.pts[pm25.pts@data$Year==2015,], 
+                             value~layer.1 + layer.2 + wc2.0_bio_2.5m_12
+                             + wc2.0_bio_2.5m_01 + wc2.0_2.5m_srad_04, covar,
+                             method="randomForest", fit.method=7)
+
+
+print(rf.pm25.15)
+plot(rf.pm25.09)
+
+## plot the estimated error for number of bootstrapped trees:
+plot(rf.pm25.09@regModel)
+rf.pm25.09@vgmModel
+
+# Predict...predictions still good
+pm25.rk.09 <- predict(rf.pm25.09, covar, predict.method = "RK")
+pm25.rk.12 <- predict(rf.pm25.12, covar, predict.method = "RK")
+pm25.rk.13 <- predict(rf.pm25.13, covar, predict.method = "RK")
+pm25.rk.14 <- predict(rf.pm25.14, covar, predict.method = "RK")
+pm25.rk.15 <- predict(rf.pm25.15, covar, predict.method = "RK")
+
+plot(pm25.rk.15)# it looks good
+
+# Making a raster from predictions
+pred.pm25.09 <- pm25.rk.09@predicted
+pm25.rk.raster.09 <- raster(pred.pm25.09[4])
+
+pred.pm25.12 <- pm25.rk.12@predicted
+pm25.rk.raster.12 <- raster(pred.pm25.12[4])
+
+pred.pm25.13 <- pm25.rk.13@predicted
+pm25.rk.raster.13 <- raster(pred.pm25.13[4])
+
+pred.pm25.14 <- pm25.rk.14@predicted
+pm25.rk.raster.14 <- raster(pred.pm25.14[2])
+
+pred.pm25.15 <- pm25.rk.15@predicted
+pm25.rk.raster.15 <- raster(pred.pm25.15[4])
+
+# It looks good
+plot(pm25.rk.raster.15); plot(pm25.pts[pm25.pts@data$Year==2015,], add=T, pch=1, cex=(pm25.pts[pm25.pts@data$Year==2015,]$value-min(pm25.pts[pm25.pts@data$Year==2015,]$value))
+                              /max(pm25.pts[pm25.pts@data$Year==2015,]$value-min(pm25.pts[pm25.pts@data$Year==2015,]$value)))
+
+# Stack the rasters of interpolated concentration for each pollutants
+# Extract values for each zip code
+# Run the models
