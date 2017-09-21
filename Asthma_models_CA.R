@@ -193,14 +193,48 @@ o3.pts <- spTransform(o3.pts, TA)
 pm10.pts <- spTransform(pm10.pts, TA)
 pm25.pts <- spTransform(pm25.pts, TA)
 
-# CA and USA to TA
+# CA and USA to TA...NOT WORKING
 usa <- spTransform(usa, TA)
 ca_simple <- spTransform(ca_simple, TA)
 
-## Get elevation data:
-elv <- getData('worldclim', res=2.5, var='alt')
-r <- raster(usa, res=5)
+## Get environmental data
+
+# Elevation data for CA
+elv1 <- getData('worldclim', res=0.5, lon = -121, lat=40 , var='alt')
+elv2 <- getData('worldclim', res=0.5, lon = -120, lat=40 , var='alt')
+elv <- mosaic(elv1, elv2, fun=mean)
+r <- raster(ca_simple, res=5)
 celv <- projectRaster(elv, r)
-celv <- mask(celv, usa)
+celv <- mask(celv, ca_simple)
+
+# Average wind speed data for CA. Need to stack and average myself
+wind <- list()
+month <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12")
+for (i in 1:12){
+wind[i] <- raster(paste("wc2.0_30s_wind_", month[i], ".tif", sep=""))
+}
+# Stacking, projecting and masking
+wind.s <- stack(wind)
+cwind.s <- projectRaster(wind.s, r)
+cwind.s <- mask(cwind.s, ca_simple)
+
+# Mean wind speed in CA
+cwind <- mean(cwind.s)
+
+# Annual precipitation...need better resolution...downloading now
+prec <- raster("wc2.0_bio_2.5m_12.tif")
+cprec <- projectRaster(prec, r)
+cprec <- mask(cprec, ca_simple)
+
+# Average temp...need better resolution...downloading now
+temp <- raster("wc2.0_bio_2.5m_01.tif")
+ctemp <- projectRaster(temp, r)
+ctemp <- mask(ctemp, ca_simple)
+
+# Radiation...this is just april and low resolution. Need higher res and whole year to get average
+rad <- raster("wc2.0_2.5m_srad_04.tif")
+crad <- projectRaster(rad, r)
+crad <- mask(crad, ca_simple)
+
 
 
