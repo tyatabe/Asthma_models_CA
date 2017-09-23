@@ -13,6 +13,7 @@ asthma$zip <- as.factor(clean.zipcodes(substr(asthma$ZIP.code, 1,5 )))
 cases <- asthma[asthma$Age.Group=="All Ages",]
 cases <- cases[,-2]
 cases$Age.adjusted.rate <- log(cases$Age.adjusted.rate)
+
 # zipcode coordinates
 
 data(zipcode)
@@ -268,7 +269,7 @@ rf.so2@vgmModel
 
 # Predict...It doesn't work for SO2...to little obs
 # Perhaps with data for the whole US
-so2.rk <- predict(rf.so2, covar, predict.method = "RK")
+so2.rk <- predict(rf.so2.09, covar, predict.method = "RK")
 plot(so2.rk)
 
 # NO2. it converged for 2009, 2013, 2014, and 2015
@@ -612,6 +613,11 @@ pm10.stack <- stack(pm10.rk.raster.09, pm10.rk.raster.12, pm10.rk.raster.13,
 pm25.stack <- stack(pm25.rk.raster.09, pm25.rk.raster.12, pm25.rk.raster.13, 
                    pm25.rk.raster.14, pm25.rk.raster.15)
 
+# Make stack of all pollutants for 2015
+all.stack <- stack(no2.rk.raster.15, co.rk.raster.15, o3.rk.raster.15, 
+                   pm10.rk.raster.15, pm25.rk.raster.15)
+
+
 # Extract values for each zip code
 # Extract no2, co, o3, pm10, amd pm25
 
@@ -626,6 +632,7 @@ dat <- kk.pts@data
 
 d <- dat [,c("zip", "Year", "Number.of.Visits", "Age.adjusted.rate",
                 "latitude", "longitude")]
+d$rate <- exp(d$Age.adjusted.rate)
 d$no2 <- ifelse(dat$Year==2009, dat$no2[,1],ifelse(dat$Year==2012, dat$no2[,2],
                 ifelse(dat$Year==2013, dat$no2[,3], 
                 ifelse(dat$Year==2014, dat$no2[,4], 
@@ -654,9 +661,10 @@ d$pm25 <- ifelse(dat$Year==2009, dat$pm25[,1],ifelse(dat$Year==2012, dat$pm25[,2
 # Remove NA's (not so sure why they don't have pollutants, perhaps out of state boundary)
 d <- d[!is.na(d$o3),]
 
+
 # Split data in training and testing
-training <- d[d$Year<2015,c(3:4, 7:11)]
-testing <- d[d$Year>2014,c(3:4, 7:11)]
+training <- d[d$Year<2015,c(3:4, 8:12)]
+testing <- d[d$Year>2014,c(3:4, 8:12)]
 all <- d
 
 # Run the models: random forest
@@ -686,6 +694,17 @@ cor(pred, testing$Age.adjusted.rate)^2 #terrible fit 0.176
 #MSE random forest VS just using the overal mean...15% better
 mean((pred - testing$Age.adjusted.rate)^2)
 mean((mean(training$Age.adjusted.rate) - testing$Age.adjusted.rate)^2)
+
+# Learning curve of random forest
+library(caret)
+learning.c <- learing_curve_dat(training[,-1], outcome = "Age.adjusted.rate", 
+                                proportion = (1:10)/10,
+                                test_prop = 0, method = "rf", verbose = TRUE)
+
+# Plot...Need more data
+ggplot(learning.c, aes(x = Training_Size, y = RMSE, color = Data)) + 
+  geom_smooth(method = loess, span = .8) + 
+  theme_bw()
 
 # Trying boosting
 library(gbm)
@@ -720,5 +739,187 @@ abline(lm(pred.boost.pois~testing$Age.adjusted.rate), lty=2)
 # HAVE TO TRY SOMETHING ELSE
 # If fitting GLM, try interactions, cuadratic, cubic and to the 4th degree polynomials
 
+# Multi-level Poisson model with Stan. It has to be neg binomial, as mean
+# is 50.7 and var is 1185
+
+# Creatig a pairwise difference in time matrix (time distance b/w obs)
+dist.y <- dist(unique(d$Year), method = "maximum", diag = T, upper = T, p = 2)
+dist.m.y <- as.matrix(dist.y)# It looks funny b/c years are not ordered
+
+# Creatig a pairwise spatial distance matrix (spatial distance b/w obs)
+coords <- cbind(d$zip, d$longitude, d$latitude)
+coords <- coords[unique(d$zip),2:3]
+dist.zips <- pointDistance(coords, lonlat = F)
+
+# Creating list of data for Stan model
+# Note that rates are X 10, to make ir integer. 
+# Now it represents rates per 100,000
+d.list <- list(N= length(d$rate), N_zip=length(unique(d$zip)), 
+               N_year=length(unique(d$Year)), dist_year=dist.m.y, 
+               Dmat=dist.zips,
+               zip=as.integer(d$zip), year=d$Year, rate=as.integer(d$rate*10), 
+               no2=as.vector(scale(d$no2, center=mean(d$no2), scale=sd(d$no2)*2)),
+               co=as.vector(scale(d$co, center=mean(d$co), scale=sd(d$co)*2)),
+               o3=as.vector(scale(d$o3, center=mean(d$o3), scale=sd(d$o3)*2)),
+               pm10=as.vector(scale(d$pm10, center=mean(d$pm10), scale=sd(d$pm10)*2)),
+               pm25=as.vector(scale(d$pm25, center=mean(d$pm25), scale=sd(d$pm25)*2)))
+# Cuadratic terms and two way interactions
+d.list$no2_sq <- d.list$no2^2
+d.list$co_sq <- d.list$co^2
+d.list$o3_sq <- d.list$o3^2
+d.list$pm10_sq <- d.list$pm10^2
+d.list$pm25_sq <- d.list$pm25^2
+d.list$no2_co <- d.list$no2 * d.list$co
+d.list$no2_o3 <- d.list$no2 * d.list$o3
+d.list$no2_pm10 <- d.list$no2 * d.list$pm10
+d.list$no2_pm25 <- d.list$no2 * d.list$pm25
+d.list$co_o3 <- d.list$co * d.list$o3
+d.list$co_pm10 <- d.list$co * d.list$pm10
+d.list$co_pm25 <- d.list$co * d.list$pm25
+d.list$o3_pm10 <- d.list$o3 * d.list$pm10
+d.list$o3_pm25 <- d.list$o3 * d.list$pm25
+d.list$pm10_pm25 <- d.list$pm10 * d.list$pm25
+
+# Save the data in case it crashes
+
+saveRDS(d.list, "data_list.rds")
+
+# Cuadratic terms and two way interactions for data frame for RF
+d$no2_sq <- d$no2^2
+d$co_sq <- d$co^2
+d$o3_sq <- d$o3^2
+d$pm10_sq <- d$pm10^2
+d$pm25_sq <- d$pm25^2
+d$no2_co <- d$no2 * d$co
+d$no2_o3 <- d$no2 * d$o3
+d$no2_pm10 <- d$no2 * d$pm10
+d$no2_pm25 <- d$no2 * d$pm25
+d$co_o3 <- d$co * d$o3
+d$co_pm10 <- d$co * d$pm10
+d$co_pm25 <- d$co * d$pm25
+d$o3_pm10 <- d$o3 * d$pm10
+d$o3_pm25 <- d$o3 * d$pm25
+d$pm10_pm25 <- d$pm10 * d$pm25
 
 
+# Saving the data frame for later use
+
+saveRDS(d, "data_ready.rds")
+
+
+# Load saved list
+d.list <- readRDS("data_list.rds")
+
+
+
+# Getting .r file for upload to stan forum
+rstan::stan_rdump(names(d.list), file = "my.data.R", envir = as.environment(d.list))
+
+# Init values
+n_chains <- 1
+start <- list(a=0, a_zip_raw=rep(0, d.list$N_zip), bno2=0, bco=0, bo3=0, bpm10=0, bpm25=0,
+              bno2_sq=0, bco_sq=0, bo3_sq=0, bpm10_sq=0, bpm25_sq=0,
+              bno2_co=0, bno2_o3=0, bno2_pm10=0, bno2_pm25=0, bco_o3=0,
+              bco_pm10=0, bco_pm25=0, bo3_pm10=0, bo3_pm25=0, bpm10_pm25=0)
+              
+init <- list()
+for ( i in 1:n_chains ) init[[i]] <- start
+
+# Model fitting. I need more than 16 gb of ram to run this model
+# I'm screwed!
+library(rstan)
+m1.1 <- stan(model_code = stancode1, iter=4000, chains=1, cores=1, init=init,
+             warmup=1000, control = list(adapt_delta = 0.8),
+             data=d.list)
+
+# Model checking
+
+## Creating data set for trying Asthma rate as a function of previous year's
+## rate plus pollutants
+
+# Loading previously created file
+data2 <- readRDS("data_ready.rds")
+data2$rate <- data2$Age.adjusted.rate
+
+# One data frame for each year
+data.2009 <- data2[data2$Year==2009,c("zip", "rate")]
+data.2012 <- data2[data2$Year==2012,c("zip", "rate")]
+data.2013 <- data2[data2$Year==2013,c("zip", "rate")]
+data.2014 <- data2[data2$Year==2014,c("zip", "rate")]
+data.2015 <- data2[data2$Year==2015,]
+
+# Merging the data frames
+data3 <- merge(data.2009, data.2012, by="zip")
+data3 <- merge(data3, data.2013, by="zip")
+data3 <- merge(data3, data.2014, by="zip")
+data3 <- merge(data3, data.2015, by="zip")
+
+colnames(data3)[c(2:5, 11)] <- c("rate09", "rate12", "rate13", "rate14", "rate15")
+
+
+# Remove unused vars
+data.all <- data3[,-c(1, 6:10)]
+
+
+# Split data in training and testing
+r.s <- sample(nrow(data.all), nrow(data.all)*.8)
+training <- data.all[r.s,]
+testing <- data.all[-r.s,]
+
+
+# Doing random forest with previous years + interpolated air pollutants
+library(randomForest)
+rfbf = randomForest(rate15 ~ ., data=training, importance=T)
+
+# Compare with just using previous years...Just previous years is as good
+rfbf_2 = randomForest(rate15 ~ ., data=training[,1:5], importance=T)
+
+# Predicting with the testing data
+pred <- predict(rfbf, testing, type="response",
+                norm.votes=F, predict.all=FALSE, proximity=FALSE, nodes=FALSE)
+
+pred_2 <- predict(rfbf_2, testing, type="response",
+                norm.votes=F, predict.all=FALSE, proximity=FALSE, nodes=FALSE)
+
+
+#Model looks good...but we know why
+plot(exp(pred), exp(testing$rate15), ylim=c(0,150), xlim=c(0,150),
+     xlab="Pred 2015 asthma attacks rates", ylab="Obs 2015 asthma attacks rates")
+abline(lm(exp(pred)~exp(testing$rate15)), lty=2)
+abline(1,1, col="red")
+
+cor(pred, testing$rate15)^2 #good fit 0.85
+
+#MSE random forest VS just using just previous years' rate
+mse1 <- mean((pred - testing$rate15)^2)
+mse2 <- mean((pred_2 - testing$rate15)^2)
+mse3 <- mean((testing$rate14 - testing$rate15)^2)
+
+mse1/mse2# about 9% better than just using previous years
+mse1/mse3# about 18% better than just using previous years
+
+#Most important variables
+varImpPlot(rfbf)
+
+# Creating object for the app
+
+# Fit model with full dataset
+rfbf_all = randomForest(rate15 ~ ., importance=T, data=data.all)
+pred.all <- predict(rfbf_all, data.all, type="response",
+                norm.votes=F, predict.all=FALSE, proximity=FALSE, nodes=FALSE)
+
+# Backtransforming from log scale to rate per 10,000
+pred.all <- exp(pred.all)
+
+# Creating data frame for app to work with
+pred.all <- data.frame(pred.all, data3$zip)
+colnames(pred.all) <- c("pred", "zip")
+
+# Transforming zip code from factor to text
+pred.all$zip.text <- as.character(pred.all$zip)  
+
+# Save as RDS (saves object to be used later)
+saveRDS(pred.all, "/home/tyatabe/Onedrive/Dev folder/AsthMap/data/pred.rds")
+
+# load just to check
+jjj <- readRDS("/home/tyatabe/Onedrive/Dev folder/AsthMap/data/pred.rds")
